@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -37,14 +38,14 @@ namespace VelixoPayment.Controllers
         public IActionResult Confirmation(string session_id)
         {
             var sessionService = new SessionService();
-            Session session = sessionService.Get(session_id, new SessionGetOptions() {  Expand = new List<string>() { "payment_intent.latest_charge.balance_transaction" } });
+            Session session = sessionService.Get(session_id);
 
             if (session.PaymentStatus == "paid")
             {
                 if(!session.Metadata.ContainsKey("PaymentReferenceNbr"))
                 {
                     //Fire and forget -- we don't make user wait, and if this fails we'll create payment manually.
-                    Task.Run(() => CreateAndReleasePayment(session));
+                    Task.Factory.StartNew(async () => await CreateAndReleasePayment(session_id));
                 }
 
                 return View(new PaymentConfirmationViewModel { InvoiceNumber = session.Metadata["InvoiceNumber"] });
@@ -55,9 +56,35 @@ namespace VelixoPayment.Controllers
             }
         }
 
-        private void CreateAndReleasePayment(Session session)
+        private async Task CreateAndReleasePayment(string session_id)
         {
             RestClient client = null;
+            Session session = null;
+
+            var sessionService = new SessionService();
+
+            int retryCount = 0;
+            while(true)
+            {
+                //Give time to Stripe to finalize payment; balance transaction will be null otherwise
+                await Task.Delay(5000);
+
+                session = sessionService.Get(session_id, new SessionGetOptions() { Expand = new List<string>() { "payment_intent.latest_charge.balance_transaction" } });
+                if(session.PaymentIntent == null || session.PaymentIntent.LatestCharge == null || session.PaymentIntent.LatestCharge.BalanceTransaction == null)
+                {
+                    retryCount++;
+
+                    if (retryCount >= 5)
+                    {
+                        _logger.LogWarning("Stripe payment charge data incomplete; retry count exceeded for session " + session_id);
+                        return;
+                    }
+                }
+                else
+                {
+                    break;
+                }
+            }
 
             try
             {
@@ -96,7 +123,7 @@ namespace VelixoPayment.Controllers
                     }
                 });
 
-                var response = client.Execute(createPaymentRequest);
+                var response = await client.ExecuteAsync(createPaymentRequest);
 
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
@@ -111,13 +138,13 @@ namespace VelixoPayment.Controllers
 
                         payment.DocumentsToApply[0].AmountPaid = new(((decimal)session.PaymentIntent.LatestCharge.BalanceTransaction.Amount) / 100);
                         adjustPaymentAmountRequest.AddJsonBody(payment);
-                        response = client.Execute(adjustPaymentAmountRequest);
+                        response = await client.ExecuteAsync(adjustPaymentAmountRequest);
                     }
 
                     //Update Stripe metadata with payment number
                     var service = new SessionService();
                     session.Metadata["PaymentReferenceNbr"] = payment.ReferenceNbr.Value;
-                    service.Update(session.Id, new SessionUpdateOptions() { Metadata = session.Metadata });
+                    await service.UpdateAsync(session.Id, new SessionUpdateOptions() { Metadata = session.Metadata });
 
                     //Release payment
                     var releasePaymentRequest = new RestRequest("/entity/Default/24.200.001/Payment/Release", Method.Post);
@@ -133,7 +160,7 @@ namespace VelixoPayment.Controllers
                         }
                     });
 
-                    response = client.Execute(releasePaymentRequest);
+                    response = await client.ExecuteAsync(releasePaymentRequest);
                 }
                 else
                 {
@@ -150,7 +177,7 @@ namespace VelixoPayment.Controllers
                 try
                 {
                     //Logout
-                    client.Execute(new RestRequest("/entity/auth/logout", Method.Post));
+                    await client.ExecuteAsync(new RestRequest("/entity/auth/logout", Method.Post));
                 }
                 catch (Exception ex)
                 {
