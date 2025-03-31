@@ -144,18 +144,22 @@ namespace VelixoPayment.Controllers
         {
             RestClient client = null;
 
+            //Sanitize user input
+            model.InvoiceNumber = model.InvoiceNumber.Trim().PadLeft(6, '0'); //TODO: Adjust to your invoice numbering sequence length
+            model.CustomerID = model.CustomerID.Trim();
+
             try
             {
                 client = GetAcumaticaRestSession();
 
                 //Get invoice
                 var getInvoiceRequest = new RestRequest("/entity/VelixoPayment/24.200.001/Invoice/Invoice/{invoiceNumber}?$select=Balance,Customer,Currency,Description");
-                getInvoiceRequest.AddUrlSegment("invoiceNumber", model.InvoiceNumber.Trim().PadLeft(6, '0'));
+                getInvoiceRequest.AddUrlSegment("invoiceNumber", model.InvoiceNumber);
                 var getInvoiceResponse = client.Execute(getInvoiceRequest);
 
                 var invoice = JsonConvert.DeserializeObject<Acumatica.Invoice>(getInvoiceResponse.Content);
 
-                if (invoice.Customer == null || !invoice.Customer.Value.Trim().Equals(model.CustomerID.Trim(), StringComparison.CurrentCultureIgnoreCase)) throw new Exception("Invoice number and/or customer ID is invalid.");
+                if (invoice.Customer == null || !invoice.Customer.Value.Trim().Equals(model.CustomerID, StringComparison.CurrentCultureIgnoreCase)) throw new Exception("Invoice number and/or customer ID is invalid.");
                 if (invoice.Balance.Value <= 0) throw new Exception("Invoice has been paid already.");
 
                 var options = new SessionCreateOptions
@@ -163,7 +167,7 @@ namespace VelixoPayment.Controllers
                     PaymentIntentData = new SessionPaymentIntentDataOptions
                     {
                         SetupFutureUsage = "off_session",
-                        Description = "Velixo Invoice #" + model.InvoiceNumber.Trim().PadLeft(6, '0')
+                        Description = "Velixo Invoice #" + model.InvoiceNumber
                     },
                     PaymentMethodTypes = new List<string> {
                         "card",
@@ -174,7 +178,7 @@ namespace VelixoPayment.Controllers
                             {
                                 ProductData = new SessionLineItemPriceDataProductDataOptions()
                                 {
-                                    Name = "Velixo Invoice #" + model.InvoiceNumber.Trim().PadLeft(6,'0'),
+                                    Name = "Velixo Invoice #" + model.InvoiceNumber,
                                     Description = invoice.Description.Value,
                                 },
                                 UnitAmount = (long) (invoice.Balance.Value * 100),
