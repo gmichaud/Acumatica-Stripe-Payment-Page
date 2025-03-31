@@ -36,8 +36,8 @@ namespace VelixoPayment.Controllers
 
         public IActionResult Confirmation(string session_id)
         {
-            var service = new SessionService();
-            Session session = service.Get(session_id);
+            var sessionService = new SessionService();
+            Session session = sessionService.Get(session_id, new SessionGetOptions() {  Expand = new List<string>() { "payment_intent.latest_charge.balance_transaction" } });
 
             if (session.PaymentStatus == "paid")
             {
@@ -64,7 +64,7 @@ namespace VelixoPayment.Controllers
                 client = GetAcumaticaRestSession();
 
                 //Create payment
-                var createPaymentRequest = new RestRequest("/entity/Default/24.200.001/Payment", Method.Put);
+                var createPaymentRequest = new RestRequest("/entity/VelixoPayment/24.200.001/Payment?$expand=DocumentsToApply", Method.Put);
                 createPaymentRequest.AddHeader("Content-Type", "application/json");
                 createPaymentRequest.AddHeader("Accept", "application/json");
 
@@ -73,16 +73,25 @@ namespace VelixoPayment.Controllers
                     Type = new("Payment"),
                     CustomerID = new(session.Metadata["CustomerID"]),
                     PaymentMethod = new("STRIPE"),
-                    CashAccount = new(session.Currency == "usd" ? "1008" : "1013"), //1008 for USD, 1013 for CAD
+                    CashAccount = new(session.PaymentIntent.LatestCharge.BalanceTransaction.Currency == "usd" ? "1008" : "1013"), //1008 for USD, 1013 for CAD
                     PaymentRef = new(session.PaymentIntentId),
-                    PaymentAmount = new(((decimal)session.AmountTotal) / 100),
+                    PaymentAmount = new(((decimal)session.PaymentIntent.LatestCharge.BalanceTransaction.Amount) / 100),
                     DocumentsToApply = new[]
                     {
                         new Acumatica.DocumentApplication()
                         {
                             DocType = new ("Invoice"),
                             ReferenceNbr = new(session.Metadata["InvoiceNumber"]),
-                            AmountPaid = new (((decimal) session.AmountTotal) / 100)
+                            AmountPaid = new (((decimal) session.PaymentIntent.LatestCharge.BalanceTransaction.Amount) / 100),
+                            CrossRate = new(session.PaymentIntent.LatestCharge.BalanceTransaction.ExchangeRate.GetValueOrDefault(1)),
+                        }
+                    },
+                    Charges = new[]
+                    {
+                        new Acumatica.Charge()
+                        {
+                            EntryTypeID = new("CCFEES"),
+                            Amount = new (((decimal) session.PaymentIntent.LatestCharge.BalanceTransaction.Fee) / 100),
                         }
                     }
                 });
@@ -92,6 +101,18 @@ namespace VelixoPayment.Controllers
                 if (response.StatusCode == HttpStatusCode.OK)
                 {
                     var payment = JsonConvert.DeserializeObject<Acumatica.Payment>(response.Content);
+
+                    if(session.PaymentIntent.LatestCharge.BalanceTransaction.ExchangeRate.HasValue)
+                    { 
+                        //Correct payment amount (Acumatica always recalculates it when modifying the cross-rate)
+                        var adjustPaymentAmountRequest = new RestRequest("/entity/VelixoPayment/24.200.001/Payment", Method.Put);
+                        adjustPaymentAmountRequest.AddHeader("Content-Type", "application/json");
+                        adjustPaymentAmountRequest.AddHeader("Accept", "application/json");
+
+                        payment.DocumentsToApply[0].AmountPaid = new(((decimal)session.PaymentIntent.LatestCharge.BalanceTransaction.Amount) / 100);
+                        adjustPaymentAmountRequest.AddJsonBody(payment);
+                        response = client.Execute(adjustPaymentAmountRequest);
+                    }
 
                     //Update Stripe metadata with payment number
                     var service = new SessionService();
