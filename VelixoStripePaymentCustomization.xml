@@ -1,0 +1,31 @@
+<Customization level="" description="" product-version="24.205">
+    <EntityEndpoint>
+        <Endpoint xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="VelixoPayment" version="24.200.001" systemContractVersion="4" xmlns="http://www.acumatica.com/entity/maintenance/5.31">
+            <ExtendsEndpoint name="Default" version="24.200.001" />
+            <TopLevelEntity name="Invoice" screen="AR301000">
+                <Fields>
+                    <Field name="Currency" type="StringValue" />
+                </Fields>
+                <Mappings>
+                    <Mapping field="Currency">
+                        <To object="Document" field="CuryID" />
+                    </Mapping>
+                </Mappings>
+            </TopLevelEntity>
+            <TopLevelEntity name="Payment" screen="AR302000">
+                <Mappings>
+                    <Mapping field="DocumentsToApply">
+                        <Mapping field="CrossRate">
+                            <To object="Adjustments" field="AdjdCuryRate" />
+                        </Mapping>
+                    </Mapping>
+                </Mappings>
+            </TopLevelEntity>
+            <Detail name="PaymentDetail">
+                <Fields>
+                    <Field name="CrossRate" type="DecimalValue" />
+                </Fields>
+            </Detail>
+        </Endpoint>
+    </EntityEndpoint>
+</Customization>
