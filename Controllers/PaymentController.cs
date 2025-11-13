@@ -67,14 +67,14 @@ namespace VelixoPayment.Controllers
             while(true)
             {
                 //Give time to Stripe to finalize payment; balance transaction will be null otherwise
-                await Task.Delay(5000);
+                await Task.Delay(5000 * retryCount);
 
                 session = sessionService.Get(session_id, new SessionGetOptions() { Expand = new List<string>() { "payment_intent.latest_charge.balance_transaction" } });
                 if(session.PaymentIntent == null || session.PaymentIntent.LatestCharge == null || session.PaymentIntent.LatestCharge.BalanceTransaction == null)
                 {
                     retryCount++;
 
-                    if (retryCount >= 5)
+                    if (retryCount >= 10)
                     {
                         _logger.LogWarning("Stripe payment charge data incomplete; retry count exceeded for session " + session_id);
                         return;
