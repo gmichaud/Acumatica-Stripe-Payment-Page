@@ -66,9 +66,6 @@ namespace VelixoPayment.Controllers
             int retryCount = 0;
             while(true)
             {
-                //Give time to Stripe to finalize payment; balance transaction will be null otherwise
-                await Task.Delay(5000 * retryCount);
-
                 session = sessionService.Get(session_id, new SessionGetOptions() { Expand = new List<string>() { "payment_intent.latest_charge.balance_transaction" } });
                 if(session.PaymentIntent == null || session.PaymentIntent.LatestCharge == null || session.PaymentIntent.LatestCharge.BalanceTransaction == null)
                 {
@@ -84,6 +81,9 @@ namespace VelixoPayment.Controllers
                 {
                     break;
                 }
+
+                //Give time to Stripe to finalize payment; balance transaction will be null otherwise -- shouldn't occur with CaptureMethod = "automatic" instead of the default "automatic_async"
+                await Task.Delay(5000 * retryCount);
             }
 
             try
@@ -215,7 +215,8 @@ namespace VelixoPayment.Controllers
                     PaymentIntentData = new SessionPaymentIntentDataOptions
                     {
                         SetupFutureUsage = "off_session",
-                        Description = "Velixo Invoice #" + model.InvoiceNumber
+                        Description = "Velixo Invoice #" + model.InvoiceNumber,
+                        CaptureMethod = "automatic"
                     },
                     PaymentMethodTypes = new List<string> {
                         "card",
